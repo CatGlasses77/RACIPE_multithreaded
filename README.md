@@ -8,8 +8,10 @@ Modifications were made using OpenMP.
 
 For linux users: use commands "make" and "make clean" to generate the RACIPE file.
 For windows users: run the following commands in cmd
+```
 gcc -g -pg -Wall -fopenmp -c RACIPE.c -o RACIPE.o
 gcc -g -pg -Wall -fopenmp -c pcg_basic.c -o pcg_basic.o
 gcc -g -pg -Wall -fopenmp -c RACIPELIB.c -o RACIPELIB.o
 gcc -g -pg -Wall -fopenmp -c rkf45.c -o rkf45.o
 gcc -g -pg -Wall -fopenmp -o RACIPE RACIPE.o pcg_basic.o RACIPELIB.o rkf45.o
+```
