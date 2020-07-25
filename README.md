@@ -7,6 +7,7 @@ On testing this on a 12 core CPU, we found that using 80 threads gave a speed bo
 Modifications were made using OpenMP.
 
 For linux users: use commands "make" and "make clean" to generate the RACIPE file.
+
 For windows users: run the following commands in cmd
 ```
 gcc -g -pg -Wall -fopenmp -c RACIPE.c -o RACIPE.o
