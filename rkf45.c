@@ -2,7 +2,7 @@
 # include <stdio.h>
 # include <math.h>
 # include <time.h>
-
+# include <threads.h>
 # include "RACIPELIB.h"
 # include "rkf45.h"
 
@@ -82,7 +82,7 @@ float r4_epsilon ( )
     Output, float R4_EPSILON, the R4 round-off unit.
 */
 {
-  static float value = 1.19209290E-07;
+  static __thread float value = 1.19209290E-07;
 
   return value;
 }
@@ -495,7 +495,7 @@ int r4_rkf45 ( void f ( double t, double y[], double yp[], double p[], struct to
 {
 # define MAXNFE 3000
 
-  static float abserr_save = -1.0;
+  static __thread float abserr_save = -1.0;
   float ae;
   float dt;
   float ee;
@@ -509,21 +509,21 @@ int r4_rkf45 ( void f ( double t, double y[], double yp[], double p[], struct to
   double *f4;
   double *f5;
   int flag_return;
-  static int flag_save = -1000;
-  static float h = -1.0;
+  static __thread int flag_save = -1000;
+  static __thread float h = -1.0;
   int hfaild;
   float hmin;
   int i;
-  static int init = -1000;
+  static __thread int init = -1000;
   int k;
-  static int kflag = -1000;
-  static int kop = -1;
+  static __thread int kflag = -1000;
+  static __thread int kop = -1;
   int mflag;
-  static int nfe = -1;
+  static __thread int nfe = -1;
   int output;
   float relerr_min;
-  static float relerr_save = -1.0;
-  static float remin = 1.0E-12;
+  static __thread float relerr_save = -1.0;
+  static __thread float remin = 1.0E-12;
   float s;
   float scale;
   float tol;
@@ -1553,7 +1553,7 @@ int r8_rkf45 ( void f ( double t, double y[], double yp[], double p[], struct to
 {
 # define MAXNFE 3000
 
-  static double abserr_save = -1.0;
+  static __thread double abserr_save = -1.0;
   double ae;
   double dt;
   double ee;
@@ -1567,21 +1567,21 @@ int r8_rkf45 ( void f ( double t, double y[], double yp[], double p[], struct to
   double *f4;
   double *f5;
   int flag_return;
-  static int flag_save = -1000;
-  static double h = -1.0;
+  static __thread int flag_save = -1000;
+  static __thread double h = -1.0;
   int hfaild;
   double hmin;
   int i;
-  static int init = -1000;
+  static __thread int init = -1000;
   int k;
-  static int kflag = -1000;
-  static int kop = -1;
+  static __thread int kflag = -1000;
+  static __thread int kop = -1;
   int mflag;
-  static int nfe = -1;
+  static __thread int nfe = -1;
   int output;
   double relerr_min;
-  static double relerr_save = -1.0;
-  static double remin = 1.0E-12;
+  static __thread double relerr_save = -1.0;
+  static __thread double remin = 1.0E-12;
   double s;
   double scale;
   double tol;
@@ -2159,7 +2159,7 @@ void timestamp ( void )
 {
 # define TIME_SIZE 40
 
-  static char time_buffer[TIME_SIZE];
+  static __thread char time_buffer[TIME_SIZE];
   const struct tm *tm;
   size_t len;
   time_t now;

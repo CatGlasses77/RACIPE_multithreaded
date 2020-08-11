@@ -1,23 +1,23 @@
 /***********************************************************************
  Random Circuit Perturbation (RACIPE) menthod
- 
+
  Copyright 2016 BIN HUANG <bh14@rice.edu>
- 
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
  http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  See the License for the specific language governing permissions and
  limitations under the License.
- 
+
  Paper to cite:
  Huang, Bin, Mingyang Lu, Dongya Jia, Eshel Ben-Jacob, Herbert Levine, and Jose N. Onuchic. "Interrogating the topological robustness of gene regulatory circuits by randomization." PLoS computational biology 13, no. 3 (2017): e1005456.
- 
+
  This code has used PCG Random Number Generation script by Melissa O'Neill
  ************************************************************************/
 
@@ -29,31 +29,34 @@
 # include <string.h>
 # include <inttypes.h>
 # include <omp.h>
+
 # include "RACIPELIB.h"
 # include "pcg_basic.h"
 # include "rkf45.h"
-int glob = 0;
-int glob2 = 1;
-int flag_meow = 0;
-int threads_meow = 3;
+
+/*********Global Variables to monitor Progress and No.of Threads ********/
+int countstartmodels=0;
+int countfinmodels=0;
+int threads=3;
+
 /*********Shared Functions*********/
 // Generate random value in (minV, maxV) following uniform distribution
 double randu(double minV, double maxV)
 {
   double u;
-  
+
   do {
     u = ((double)pcg32_random()/UINT32_MAX);
   } while (u==0);
 
-  return (minV + (maxV - minV)*u); 
+  return (minV + (maxV - minV)*u);
 }
 
 // Generate random value following guassian distribtuion N(m, stadvalue)
 double randg(double m, double stdvalue)
 {
   double u1 = 0.0, u2 = 0.0, rsq = 0.0, fac = 0.0;
-  static double z1 = 0.0, z2 = 0.0;   
+  static double z1 = 0.0, z2 = 0.0;
   static int call = 0;
 
   if (call == 1){
@@ -66,15 +69,15 @@ double randg(double m, double stdvalue)
     u2 = 2.0*randu(0, 1) - 1;
     rsq = u1*u1 + u2*u2;
   } while (rsq >= 1.0 || rsq == 0.0);
-  
+
   fac = sqrt(-2.0*log(rsq)/rsq);
-  
+
   z1 = u1*fac;
   z2 = u2*fac;
 
-  call = !call; 
+  call = !call;
 
-  return z1*stdvalue + m;  
+  return z1*stdvalue + m;
 }
 
 // Generate random value following non-negative guassian distribtuion N(m, stadvalue)
@@ -150,7 +153,7 @@ double randd(double minN, double maxN, int dist)
     }
   } while (u == maxN+0.5 || cnt == 0);
 
-  return z; 
+  return z;
 }
 
 // Shifted Hill Function
@@ -178,7 +181,7 @@ double median(double *x, int n)
       }
     }
   }
-  
+
   if (n%2==0) {
     return ((x[n/2] + x[n/2 - 1]) / 2.0);
   }
@@ -192,7 +195,7 @@ double sumdelta (double *y, double *ytmp, int NEQN)
 {
     int      i = 0;
     double out = 0.0;
-    // #pragma omp parallel for reduction (+:out)
+
     for (i = 0; i < NEQN; i++){
         out = out + (y[i] - ytmp[i])*(y[i] - ytmp[i]);
     }
@@ -210,12 +213,13 @@ void check_inputfile (int argc, char **argv, struct topo *topoinfo, struct opts 
   // Check the input arguments
   if (argc == 1) {
     printf("### Missing: Missing input file!\n");
-    exit(3); 
+    exit(3);
   }
   else if (argc == 2 && strcmp(argv[1], "-h") == 0){
     printf("Available options:\n");
     printf("-h             : Show all available options.\n");
     printf("-maxtime       : Maximum time for the simulation (Default 23.5 h).\n");
+	printf("-threads       : Number of threads to be used for the simulation (Default 3).\n");
     printf("-solver        : The integrator method (1 --> Euler or 2 --> RK45) to solve the ODEs equations (Default 1).\n");
     printf("-flag          : run RACIPE to produce the .cfg file only or the whole simulation (Default 0, perform the whole simulation).\n");
     printf("-KDID          : Gene or link (See their ID in the .cfg file) to be knocked down.\n");
@@ -231,11 +235,11 @@ void check_inputfile (int argc, char **argv, struct topo *topoinfo, struct opts 
     printf("-num_findT     : The number of simulations used to estimate the thresholds (Default 10000).\n");
     printf("-num_paras     : The number of RACIPE models to generate (Default 100).\n");
     printf("-num_ode       : The number of Random initial values to solve ODEs (Default 100).\n");
-    printf("-num_stability : The maximum number of stable states to save for one RACIPE model (Default 10).\n"); 
+    printf("-num_stability : The maximum number of stable states to save for one RACIPE model (Default 10).\n");
     printf("-thrd          : Cutoff for convergence of steady states for numerically solving ODEs (Default 1.0).\n");
     printf("-Toggle_f_p    : Save parameters of each RACIPE model or not (Default 1 (yes)).\n");
     printf("-stepsize      : Stepsize for solving ODEs (Default 0.1).\n");
-    printf("-maxiters      : The maximum number of iterations for solving ODEs at each random initial condition (Default 20).\n");
+    printf("-maxiters      : The maximum number of iterations for solving ODEs at each random initial condition times 1000 (Default 20).\n");
     printf("-Toggle_T_test : Test the threshold assumption or not (Default 1 (yes)).\n");
     printf("-SBML_model    : Output a model in the SBML format. The parameter will be the ID of the model (start from 1) to save (Default 0 (no SBML output)).\n");
     printf("-seed          : random seed (Default 1).\n");
@@ -288,7 +292,7 @@ void initial_simuopts (int argc, char **argv, struct topo *topoinfo, struct opts
   char parasname[100] = "";
 
   if (simu_opts->exts == 1) {
-    
+
     strcpy(parasname, topoinfo->modelname);
     if (simu_opts->numKD != 0){
       for (i = 0; i < simu_opts->numKD; i++){
@@ -329,7 +333,7 @@ void initial_simuopts (int argc, char **argv, struct topo *topoinfo, struct opts
     simu_opts->SF            = 1.0;
     simu_opts->num_findT     = 10000;
     simu_opts->num_paras     = 100;
-    simu_opts->num_ode       = 100; 
+    simu_opts->num_ode       = 100;
     simu_opts->num_stability = 10;
     simu_opts->thrd          = 1.0;
     simu_opts->Toggle_f_p    = 1;
@@ -351,7 +355,7 @@ void initial_simuopts (int argc, char **argv, struct topo *topoinfo, struct opts
       printf("### Warning: Uniform distribution is used.\n");
     }
   }
- 
+
   // Set up the customized options
   if (argc >= 3){
     if ((argc - 2)%2 != 0){
@@ -403,7 +407,7 @@ void initial_simuopts (int argc, char **argv, struct topo *topoinfo, struct opts
           printf("### Wrong: no such options for solver!\n");
           exit(0);
         }
-        
+
       }
       else if (strcmp(argv[i], "-num_findT") == 0){
         simu_opts->num_findT = atoi(argv[i+1]);
@@ -513,15 +517,15 @@ void initial_simuopts (int argc, char **argv, struct topo *topoinfo, struct opts
       else if (strcmp(argv[i], "-maxF") == 0){
         simu_opts->maxF = atof(argv[i+1]);
       }
-      else if (strcmp(argv[i], "-threads") == 0){
-      	threads_meow = atof(argv[i+1]);
+	  else if (strcmp(argv[i], "-threads") == 0){
+      	threads = atof(argv[i+1]);
       }
       else{
         printf("### Wrong: Can not recognize the input arguments.\n");
         printf("Please use one of the follwing:\n");
         printf("-h             : Show all available options.\n");
         printf("-maxtime       : Maximum time for the simulation (Default 23.5 h).\n");
-        printf("-threads	   : Set the number of threads to be used (Default 3).\n");
+		printf("-threads       : Number of threads to be used for the simulation (Default 3).\n");
         printf("-solver        : The integrator method (1 --> Euler or 2 --> RK45) to solve the ODEs equations (Default 1).\n");
         printf("-flag          : run RACIPE to produce the .cfg file only or the whole simulation (Default 0, perform the whole simulation).\n");
         printf("-KDID          : Gene or link (See their ID in the .cfg file) to be knocked down.\n");
@@ -537,11 +541,11 @@ void initial_simuopts (int argc, char **argv, struct topo *topoinfo, struct opts
         printf("-num_findT     : The number of simulations used to estimate the thresholds (Default 10000).\n");
         printf("-num_paras     : The number of RACIPE models to generate (Default 100).\n");
         printf("-num_ode       : The number of Random initial values to solve ODEs (Default 100).\n");
-        printf("-num_stability : The maximum number of stable states to save for one RACIPE model (Default 10).\n"); 
+        printf("-num_stability : The maximum number of stable states to save for one RACIPE model (Default 10).\n");
         printf("-thrd          : Cutoff for convergence of steady states for numerically solving ODEs (Default 1.0).\n");
         printf("-Toggle_f_p    : Save parameters of each RACIPE model or not (Default 1 (yes)).\n");
         printf("-stepsize      : Stepsize for solving ODEs (Default 0.1).\n");
-        printf("-maxiters      : The maximum number of iterations for solving ODEs at each random initial condition (Default 20).\n");
+        printf("-maxiters      : The maximum number of iterations for solving ODEs at each random initial condition times 1000 (Default 20).\n");
         printf("-Toggle_T_test : Test the threshold assumption or not (Default 1 (yes)).\n");
         printf("-SBML_model    : Output a model in the SBML format. The parameter will be the ID of the model (start from 1) to save (Default 0 (no SBML output)).\n");
         printf("-seed          : random seed (Default 1).\n");
@@ -571,9 +575,9 @@ void Model_generate (char *inputfile, struct topo *topoinfo, struct opts *simu_o
   FILE *fin;
   FILE *fout;
   char configname[100] = "";
-  
+
   // Section 2 parameters .prs
-  FILE   *fparas = NULL; 
+  FILE   *fparas = NULL;
   char   parasname[100] = "";
 
   // Section 1 --- Printout the number of genes involved and transform the topo file
@@ -682,7 +686,7 @@ void Model_generate (char *inputfile, struct topo *topoinfo, struct opts *simu_o
     }
     fprintf(fout, "\n");
   }
-  
+
   fprintf(fout, "MaximumRunningTime\t%f\n",                simu_opts->maxtime);
   fprintf(fout, "Seed\t%lld\n",                              simu_opts->myseed);
   fprintf(fout, "minP\t%f\n",                              simu_opts->minP);
@@ -708,10 +712,10 @@ void Model_generate (char *inputfile, struct topo *topoinfo, struct opts *simu_o
     tmprlt->paras     = (double *) calloc(3*topoinfo->numR+2*topoinfo->numG,        sizeof(double));
   }
 
-  fclose(fout); 
+  fclose(fout);
   fin    = NULL;
   fout   = NULL;
-  
+
   // S2 --- Generate the randomization range
   strcpy(parasname, topoinfo->modelname);
   if (simu_opts->exts == 0){
@@ -743,14 +747,14 @@ void Model_generate (char *inputfile, struct topo *topoinfo, struct opts *simu_o
   strcat(parasname, ".prs");
 
   if (simu_opts->exts == 0){
-    fparas = fopen(parasname, "w+"); 
+    fparas = fopen(parasname, "w+");
     generate_random_range(fparas, topoinfo, simu_opts);
   }
   else{
     fparas = fopen(parasname, "r");
     if (fparas == NULL){
       printf("### Warning: .prs file will be regenerated according to current .cfg file\n");
-      fparas = fopen(parasname, "w+"); 
+      fparas = fopen(parasname, "w+");
       generate_random_range(fparas, topoinfo, simu_opts);
     }
     else{
@@ -771,7 +775,7 @@ void Model_generate (char *inputfile, struct topo *topoinfo, struct opts *simu_o
 void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
 {
   int  tmpnumG  = 0;
-  int  tmpnumR  = 0; 
+  int  tmpnumR  = 0;
   int  RT       = 0;  //regulation type
   int  count    = 0;
   int  i        = 0;
@@ -789,20 +793,20 @@ void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
   }
 
   rewind(f_in);
-  
+
   fscanf(f_in, "%*[^\n]\n", NULL); //skip first line of topo file
-  
+
   while (fscanf(f_in, "%s\t%s\t%d\n", G1, G2, &RT) == 3) {
     tmpnumR++;
-                
-    // Check the types of regualtions: 1 --> Activation; 2 --> Inhibition;                
+
+    // Check the types of regualtions: 1 --> Activation; 2 --> Inhibition;
     if (RT != 1 && RT != 2){
       printf("ERROR: Number %d regulation is not recognized\n", tmpnumR);
       exit(1);
-    } 
-    
+    }
+
     if (count == 0) { // second line of topo file
-      
+
       if (strcmp(G1, G2) == 0) {
         count = count + 1;
         topoinfo->Gname = (char**)realloc(topoinfo->Gname, (count)*sizeof(char *));
@@ -828,7 +832,7 @@ void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
           matchnum = matchnum + 1;
         }
       }
-      
+
       if (matchnum == 0) {
         count = count + 1;
         topoinfo->Gname = (char**)realloc(topoinfo->Gname, (count)*sizeof(char *));
@@ -836,7 +840,7 @@ void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
         strcpy(topoinfo->Gname[count-1], G1);
         tmpnumG = tmpnumG + 1;
       }
-      
+
       if (strcmp(G1, G2) != 0) {
         matchnum = 0;
         for (i = 0; i < count; i++) {
@@ -844,7 +848,7 @@ void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
             matchnum = matchnum + 1;
           }
         }
-      
+
         if (matchnum == 0) {
           count = count + 1;
           topoinfo->Gname = (char**)realloc(topoinfo->Gname, (count)*sizeof(char *));
@@ -856,56 +860,56 @@ void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
     }
 
   }
-  
+
   // Screen printout
   printf("\n-------------------------------------------\n");
   printf("The topo file contains the following genes:\n");
   printf("Gene_ID -- Gene_Name\n");
   for (i = 0; i < count; i++) {
     printf("%d -- %s\n", i+1, topoinfo->Gname[i]);
-  } 
+  }
   printf("-------------------------------------------\n");
-  
+
   topoinfo->numR = tmpnumR;
   topoinfo->numG = tmpnumG;
-  
+
   printf("Total number of genes = %d\n",       tmpnumG);
   printf("Total number of regulations = %d\n", tmpnumR);
 
   printf("-------------------------------------------\n");
-  
-  // transformation of the topo file  
+
+  // transformation of the topo file
   topoinfo->SourceG   = (int *)calloc(tmpnumR, sizeof(int));
   topoinfo->TargetG   = (int *)calloc(tmpnumR, sizeof(int));
   topoinfo->TypeR     = (int *)calloc(tmpnumR, sizeof(int));
   topoinfo->ParasPos  = (int *)calloc(tmpnumR, sizeof(int));
   count   = 0;
-  
+
   rewind(f_in);
   fscanf(f_in, "%*[^\n]\n", NULL); //skip first line of topo file
   while (fscanf(f_in, "%s\t%s\t%d\n", G1, G2, &RT) == 3) {
-    
+
     count++;
-    
+
     for (i = 0; i < tmpnumG; i++) {
       if (strcmp(G1, topoinfo->Gname[i]) == 0) {
         topoinfo->SourceG[count-1] = i;
       }
-      
+
       if (strcmp(G2, topoinfo->Gname[i]) == 0) {
         topoinfo->TargetG[count-1] = i;
       }
     }
-    
+
     topoinfo->TypeR[count-1] = RT;
   }
-  
+
   fprintf(f_out, "NumberOfRegulations\t%d\n",       topoinfo->numR);
   fprintf(f_out, "NumberOfGenes\t%d\n",             topoinfo->numG);
-    
+
   for (i = 0; i < topoinfo->numG; i++) {
     fprintf(f_out, "%d\t%s\n", i+1, topoinfo->Gname[i]);
-  } 
+  }
 
   for (i = 0; i < topoinfo->numR; i++){
     fprintf(f_out, "%d\t%d\t%d\t%d\n", topoinfo->numG+i+1, topoinfo->SourceG[i]+1, topoinfo->TargetG[i]+1, topoinfo->TypeR[i]);
@@ -913,7 +917,7 @@ void check_topo(FILE *f_in, FILE *f_out, struct topo *topoinfo)
 
   for(i = 0; i < topoinfo->numG; i++){
     for (j = 0; j < topoinfo->numR; j++){
-      if (topoinfo->TargetG[j] == i){ 
+      if (topoinfo->TargetG[j] == i){
         topoinfo->ParasPos[j] = 3*cntP + 2*topoinfo->numG;  // Position of threshold parameters for each regulation.
         cntP = cntP + 1;
       }
@@ -1014,11 +1018,11 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
         printf("%s\t%f\n", topoinfo->Gname[i], amplifyfold[i]);
       }
 
-      // production rate  
+      // production rate
       for (i = 0; i < topoinfo->numG; i++){
         fprintf(f_paras, "Prod_of_%s\t%f\t%f\t%d\n", topoinfo->Gname[i], minP*amplifyfold[i], maxP*amplifyfold[i], 0);
       }
-      
+
       // degradation rate
       for (i = 0; i < topoinfo->numG; i++){
         fprintf(f_paras, "Deg_of_%s\t%f\t%f\t%d\n", topoinfo->Gname[i], minK, maxK, 0);
@@ -1026,7 +1030,7 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
 
       for(i = 0; i < topoinfo->numG; i++){
         for (j = 0; j < topoinfo->numR; j++){
-          if (topoinfo->TargetG[j] == i){ 
+          if (topoinfo->TargetG[j] == i){
             // Threshold
             fprintf(f_paras,   "Trd_of_%sTo%s\t%f\t%f\t%d\n", topoinfo->Gname[topoinfo->SourceG[j]], topoinfo->Gname[topoinfo->TargetG[j]], minT[topoinfo->SourceG[j]]*amplifyfold[topoinfo->SourceG[j]], maxT[topoinfo->SourceG[j]]*amplifyfold[topoinfo->SourceG[j]], 0);
             // Number of binding sites
@@ -1076,11 +1080,11 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
         printf("%s\t%f\n", topoinfo->Gname[i], amplifyfold[i]);
       }
 
-      // production rate  
+      // production rate
       for (i = 0; i < topoinfo->numG; i++){
         fprintf(f_paras, "Prod_of_%s\t%f\t%f\t%d\n", topoinfo->Gname[i], meanP*amplifyfold[i], stdP*amplifyfold[i], 0);
       }
-      
+
       // degradation rate
       for (i = 0; i < topoinfo->numG; i++){
         fprintf(f_paras, "Deg_of_%s\t%f\t%f\t%d\n", topoinfo->Gname[i], meanK, stdK, 0);
@@ -1088,7 +1092,7 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
 
       for(i = 0; i < topoinfo->numG; i++){
         for (j = 0; j < topoinfo->numR; j++){
-          if (topoinfo->TargetG[j] == i){ 
+          if (topoinfo->TargetG[j] == i){
             // Threshold
             fprintf(f_paras,   "Trd_of_%sTo%s\t%f\t%f\t%d\n", topoinfo->Gname[topoinfo->SourceG[j]], topoinfo->Gname[topoinfo->TargetG[j]], meanT[topoinfo->SourceG[j]]*amplifyfold[topoinfo->SourceG[j]], stdT[topoinfo->SourceG[j]]*amplifyfold[topoinfo->SourceG[j]], 0);
             // Number of binding sites
@@ -1116,7 +1120,7 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
       meanF = (minF_d+maxF_d)*SF/2.0;
 
       fprintf(f_paras, "Parameter\tMean\tNo_sense\tRegulation_type\n");
-      
+
       printf("Amplification of the parameter ranges (production rates and thresholds)\n");
       for(i = 0; i < topoinfo->numG; i++){
         // estimate threshold and printout
@@ -1135,11 +1139,11 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
         printf("%s\t%f\n", topoinfo->Gname[i], amplifyfold[i]);
       }
 
-      // production rate  
+      // production rate
       for (i = 0; i < topoinfo->numG; i++){
         fprintf(f_paras, "Prod_of_%s\t%f\t%f\t%d\n", topoinfo->Gname[i], meanP*amplifyfold[i], stdP, 0);
       }
-      
+
       // degradation rate
       for (i = 0; i < topoinfo->numG; i++){
         fprintf(f_paras, "Deg_of_%s\t%f\t%f\t%d\n", topoinfo->Gname[i], meanK, stdK, 0);
@@ -1147,7 +1151,7 @@ void generate_random_range(FILE *f_paras, struct topo *topoinfo, struct opts *si
 
       for(i = 0; i < topoinfo->numG; i++){
         for (j = 0; j < topoinfo->numR; j++){
-          if (topoinfo->TargetG[j] == i){ 
+          if (topoinfo->TargetG[j] == i){
             // Threshold
             fprintf(f_paras,   "Trd_of_%sTo%s\t%f\t%f\t%d\n", topoinfo->Gname[topoinfo->SourceG[j]], topoinfo->Gname[topoinfo->TargetG[j]], meanT[topoinfo->SourceG[j]]*amplifyfold[topoinfo->SourceG[j]], stdT[topoinfo->SourceG[j]], 0);
             // Number of binding sites
@@ -1215,7 +1219,7 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
   for (i = 0; i < topoinfo->numR; i++){
     if (topoinfo->TargetG[i] == ID){
       if (topoinfo->TypeR[i] == 1){ //Activation
-        numA = numA + 1;        
+        numA = numA + 1;
       }
       else if (topoinfo->TypeR[i] == 2){ //Inhibition
         numI = numI + 1;
@@ -1232,15 +1236,15 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
         g    = randu(minP, maxP);
         k    = randu(minK, maxK);
         A[i] = g/k;
-      }   
+      }
 
-      MA = median(A, num); 
+      MA = median(A, num);
 
       for (i = 0; i < num; i++){
         g    = randu(minP, maxP);
         k    = randu(minK, maxK);
         B[i] = g/k;
-        
+
         if (numA != 0){
           for (j = 0; j < numA; j++){
             g      = randu(minP, maxP);
@@ -1252,7 +1256,7 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
             B[i] = B[i]*Hillshift(g/k, T, n, lambda)/lambda;
           }
         }
-        
+
         if (numI != 0){
           for (j = 0; j < numI; j++){
             g      = randu(minP, maxP);
@@ -1277,15 +1281,15 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
           g    = randpg(minP, maxP);
           k    = randpg(minK, maxK);
           A[i] = g/k;
-        }   
+        }
 
-        MA = median(A, num); 
+        MA = median(A, num);
 
         for (i = 0; i < num; i++){
           g    = randpg(minP, maxP);
           k    = randpg(minK, maxK);
           B[i] = g/k;
-          
+
           if (numA != 0){
             for (j = 0; j < numA; j++){
               g      = randpg(minP, maxP);
@@ -1297,7 +1301,7 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
               B[i] = B[i]*Hillshift(g/k, T, n, lambda)/lambda;
             }
           }
-          
+
           if (numI != 0){
             for (j = 0; j < numI; j++){
               g      = randpg(minP, maxP);
@@ -1322,15 +1326,15 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
         g    = randexp(minP);
         k    = randexp(minK);
         A[i] = g/k;
-      }   
+      }
 
-      MA = median(A, num); 
+      MA = median(A, num);
 
       for (i = 0; i < num; i++){
         g    = randexp(minP);
         k    = randexp(minK);
         B[i] = g/k;
-        
+
         if (numA != 0){
           for (j = 0; j < numA; j++){
             g      = randexp(minP);
@@ -1342,7 +1346,7 @@ void estimate_threshold(int num, int ID, double minP, double maxP, double minK, 
             B[i] = B[i]*Hillshift(g/k, T, n, lambda)/lambda;
           }
         }
-        
+
         if (numI != 0){
           for (j = 0; j < numI; j++){
             g      = randexp(minP);
@@ -1515,7 +1519,7 @@ void read_cfg(struct topo *topoinfo, struct opts *simu_opts, struct rlt *tmprlt)
 
   for(i = 0; i < topoinfo->numG; i++){
     for (j = 0; j < topoinfo->numR; j++){
-      if (topoinfo->TargetG[j] == i){ 
+      if (topoinfo->TargetG[j] == i){
         topoinfo->ParasPos[j] = 3*cntP + 2*topoinfo->numG;  // Position of threshold parameters for each regulation.
         cntP = cntP + 1;
       }
@@ -1524,41 +1528,64 @@ void read_cfg(struct topo *topoinfo, struct opts *simu_opts, struct rlt *tmprlt)
 }
 
 /*********RACIPE Functions*********/
-void run_RACIPE(struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt)
+void run_RACIPE(struct opts *simu_opts, struct topo *topoinfo, struct rlt *maintmprlt)
 {
 
-  clock_t begin, end;
+  double begin, end;
   double  time_spent = 0.0;
   int     i          = 0;
-  int     j          = 0;
 
-  begin = clock();
-  int perc_meow = 100; //Number of percentage iters you want to display
+  omp_set_num_threads(threads);
+  begin = omp_get_wtime();
+int perc=100;
   // Seed the random value generator
   pcg32_srandom((uint64_t)(((uint64_t)time(NULL) ^ (intptr_t)&printf)*simu_opts->myseed), 54u);
-  
-  
-  omp_set_num_threads(threads_meow);
-  double time = omp_get_wtime();
-  omp_lock_t writelock;
-  
-  omp_init_lock(&writelock);
-  #pragma omp parallel for
+
+//initialize tmprlt for each thread
+struct rlt *threadtmprlt[threads];
+for(int u=0;u<threads;u++){
+	threadtmprlt[u]=(struct rlt*)malloc(sizeof(struct rlt));
+
+    threadtmprlt[u]->Nstb      = 0;
+    threadtmprlt[u]->numover   = (int *)    calloc(topoinfo->numG,                           sizeof(int));
+    threadtmprlt[u]->numdown   = (int *)    calloc(topoinfo->numG,                           sizeof(int));
+    threadtmprlt[u]->cnt_store = (int *)    calloc(simu_opts->num_stability,                 sizeof(int));
+    threadtmprlt[u]->y_store   = (double *) calloc(simu_opts->num_ode*topoinfo->numG,        sizeof(double));
+    threadtmprlt[u]->soln      = (double *) calloc(simu_opts->num_stability*topoinfo->numG,  sizeof(double));
+    threadtmprlt[u]->paras     = (double *) calloc(3*topoinfo->numR+2*topoinfo->numG,        sizeof(double));
+}
+
+#pragma omp parallel for
   for (i = 1; i <= simu_opts->num_paras; i++){
-  	#pragma omp critical
-  	{
-  	glob++;
-	if ((glob-1)%(simu_opts->num_paras/perc_meow) == 0){// && omp_get_thread_num() == 0
-		printf("%d%% ", ((glob-1)/(simu_opts->num_paras/perc_meow))*((100/perc_meow)));
-		//printf("%ds \n", ((clock() - begin)/CLOCKS_PER_SEC)/threads_meow);
-		printf("%.2fs\n", omp_get_wtime() - time);
-	}
-	}
-	//printf("meow\n");
+int     j          = 0;
+//accessing thread copy of tmprlt
+
+struct rlt *tmprlt=threadtmprlt[omp_get_thread_num()];
+
+//setting stable state counts to 0 and clearing numdown/numover
+for(int u=0;u<simu_opts->num_stability;u++){
+	tmprlt->cnt_store[u]=0;
+}
+for(int u=0;u<topoinfo->numG;u++){
+	tmprlt->numdown[u]=0;
+	tmprlt->numover[u]=0;
+}
+  #pragma omp critical
+  {
+    countstartmodels++;
+if((countstartmodels-1)%(simu_opts->num_paras/perc)==0){
+
+	printf("\r%d%% %fs",( (countstartmodels)/(simu_opts->num_paras/perc) )*(100/perc),omp_get_wtime()-begin);
+	fflush(stdout);
+	//printf("%d\n",(clock()-begin)/CLOCKS_PER_SEC);
+	//printf(" \r",
+
+}
+  }
     set_parameters(simu_opts, topoinfo, tmprlt);
-    
+
     // printf("RACIPELIB 1514");
-	//#pragma omp parallel for
+
     for (j = 0; j < simu_opts->num_ode; j++){
       if (simu_opts->solver == 1) {
         solve_ODE_euler(j, simu_opts, topoinfo, tmprlt);
@@ -1567,59 +1594,69 @@ void run_RACIPE(struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprl
         solve_ODE_rk45(j, simu_opts, topoinfo, tmprlt);
       }
     }
-    //omp_set_lock(&writelock);
-    #pragma omp critical
-	{
+ #pragma omp critical
+  {
     count_state (simu_opts, topoinfo, tmprlt);
-	
-    save_model_paras(simu_opts, topoinfo, tmprlt, i);
-    save_model_solns(simu_opts, topoinfo, tmprlt, i);
-    T_test          (simu_opts, topoinfo, tmprlt, i);
+
+    save_model_paras(simu_opts, topoinfo, tmprlt, countfinmodels+1);
+    save_model_solns(simu_opts, topoinfo, tmprlt, countfinmodels+1);
+    T_test          (simu_opts, topoinfo, tmprlt, countfinmodels+1);
 
     if (simu_opts->SBML_model == i){
-      export_SBML_model(simu_opts, topoinfo, tmprlt, i);
+      export_SBML_model(simu_opts, topoinfo, tmprlt,  countfinmodels+1);
     }
-	//#pragma omp critical
-	//{
-    glob2++;
+	countfinmodels++;
+	//update maintmprlt
+	for(int u=0;u<simu_opts->num_stability;u++){
+		 maintmprlt->cnt_store[u]+= tmprlt->cnt_store[u];
 	}
-	//omp_unset_lock(&writelock);
-	
-    //end = clock();
-    //time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-    //if (time_spent/3600 >= simu_opts->maxtime){ // PART OF ORIGINAL CODE BTW
-    //  printf("### Warning: Time-out!\n");
-    //  break;
-    //}
-    
+	for(int u=0;u<topoinfo->numG;u++){
+		 maintmprlt->numover[u]+= tmprlt->numover[u];
+		 maintmprlt->numdown[u]+= tmprlt->numdown[u];
+	}
   }
-	//omp_destroy_lock(&writelock);
+    end = omp_get_wtime();
+    time_spent = end-begin;
+    if (time_spent/3600 >= simu_opts->maxtime){
+      printf("### Warning: Time-out!\n");
+    //  break;   //OpenMP cannot break within a loop, exit instead.
+	exit(1);
+    }
+  }
+//final percentage change
+printf("\r%d%% %fs",( (countstartmodels)/(simu_opts->num_paras/perc) )*(100/perc),omp_get_wtime()-begin);
+	fflush(stdout);
   // Screen printout
   if (simu_opts->Toggle_T_test == 1){
     printf("\n-------------------T_test------------------\n");
     printf("Gene_ID -- Probs_over_T\n");
     for (i = 0; i < topoinfo->numG; i++){
-       printf("%d -- %f\n", i+1, (double)tmprlt->numover[i]/(double)(tmprlt->numover[i]+tmprlt->numdown[i]));
+       printf("%d -- %f\n", i+1, (double)maintmprlt->numover[i]/(double)(maintmprlt->numover[i]+maintmprlt->numdown[i]));
     }
   }
 
   printf("\n-----------------Stability-----------------\n");
   printf("#states -- Count\n");
   for (i = 0; i < simu_opts->num_stability; i++){
-     printf("%d -- %d\n", i+1, tmprlt->cnt_store[i]);
+     printf("%d -- %d\n", i+1, maintmprlt->cnt_store[i]);
   }
 
-  end = clock();
-  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
+
+ end = omp_get_wtime();
+  time_spent = end-begin;
   printf("---> Actual running time : %f seconds ( %f hours)\n", time_spent, time_spent/3600.0);
   printf("The maximum running time is %f.\n", simu_opts->maxtime);
-
-  release_memory  (simu_opts, topoinfo, tmprlt);
+  //freeing memory
+  for(int u=0;u<threads;u++){
+  free(threadtmprlt[u]);
+  }
+  release_memory  (simu_opts, topoinfo, maintmprlt);
 }
 
 void save_model_paras(struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt, int num)
 {
-  static FILE *f_p = NULL;                  
+  static FILE *f_p = NULL;
   char fpname [100] = "";
 
   int i = 0;
@@ -1664,13 +1701,13 @@ void save_model_paras(struct opts *simu_opts, struct topo *topoinfo, struct rlt 
       f_p   = fopen(fpname,"w");
     }
 
-    fprintf(f_p, "%d\t%d",glob2,cnt);
+    fprintf(f_p, "%d\t%d", num, cnt);
     for (i = 0; i < 3*topoinfo->numR+2*topoinfo->numG; i++){
       fprintf(f_p, "\t%f", tmprlt->paras[i]);
     }
     fprintf(f_p, "\n");
 
-    if (simu_opts->num_paras == glob2){
+    if (simu_opts->num_paras == num){
       fclose(f_p);
       f_p = NULL;
     }
@@ -1679,16 +1716,15 @@ void save_model_paras(struct opts *simu_opts, struct topo *topoinfo, struct rlt 
 
 void save_model_solns(struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt, int num)
 {
-	//printf("1\n");
+
   static FILE **f_s;
 
   int cnt = tmprlt->Nstb;
-	//printf("meow1 %d %d",cnt, simu_opts->num_stability);
-  if (flag_meow == 0) {
-    f_s = (FILE **) calloc (simu_opts->num_stability, sizeof(FILE *));
-    flag_meow = 1;
+  int n=simu_opts->num_stability;
+  if (1==num) {
+    f_s = (FILE **) calloc (simu_opts->num_stability +1, sizeof(FILE *));
   }
-  //printf("2\n");
+
   char fsname[simu_opts->num_stability][100];
   char tmpparasname[100] = "";
 
@@ -1699,7 +1735,7 @@ void save_model_solns(struct opts *simu_opts, struct topo *topoinfo, struct rlt 
   char KDIDname[100] = "";
   char OEIDname[100] = "";
   char DEIDname[100] = "";
-	//printf("3\n");
+
   if (f_s[cnt-1] == NULL) {
     sprintf(tmpparasname, "%d", cnt);
     strcpy (fsname[cnt-1], topoinfo->modelname);
@@ -1707,68 +1743,105 @@ void save_model_solns(struct opts *simu_opts, struct topo *topoinfo, struct rlt 
       if (simu_opts->numKD != 0){
         strcat(fsname[cnt-1], "_KD");
         for (i = 0; i < simu_opts->numKD; i++){
-        //printf("4\n");
           sprintf(KDIDname, "%d", simu_opts->KDID[i]);
           strcat(fsname[cnt-1], "_");
           strcat(fsname[cnt-1], KDIDname);
-          //printf("5\n");
         }
       }
       if (simu_opts->numOE != 0){
         strcat(fsname[cnt-1], "_OE");
-       // printf("6\n");
         for (i = 0; i < simu_opts->numOE; i++){
-        //printf("7\n");
           sprintf(OEIDname, "%d", simu_opts->OEID[i]);
           strcat(fsname[cnt-1], "_");
           strcat(fsname[cnt-1], OEIDname);
-         // printf("8\n");
         }
       }
       if (simu_opts->numDE != 0){
         strcat(fsname[cnt-1], "_DE");
         for (i = 0; i < simu_opts->numDE; i++){
-       // printf("9\n");
           sprintf(DEIDname, "%d", simu_opts->DEID[i]);
           strcat(fsname[cnt-1], "_");
           strcat(fsname[cnt-1], DEIDname);
-       //   printf("10\n");
         }
       }
     }
-   // printf("11\n");
     strcat (fsname[cnt-1], "_solution");
     strcat (fsname[cnt-1], "_");
     strcat (fsname[cnt-1], tmpparasname);
     strcat (fsname[cnt-1], ".dat");
     f_s[cnt-1] = fopen(fsname[cnt-1],"w");
-   // printf("12\n");
   }
-	//printf("13\n");
-  fprintf(f_s[cnt-1], "%d\t%d",glob2,cnt);
+  
+  
+   if (f_s[n] == NULL) {
+    //sprintf(tmpparasname, "%d", cnt);
+    strcpy (fsname[n], topoinfo->modelname);
+    if (simu_opts->exts == 0){
+      if (simu_opts->numKD != 0){
+        strcat(fsname[n], "_KD");
+        for (i = 0; i < simu_opts->numKD; i++){
+          sprintf(KDIDname, "%d", simu_opts->KDID[i]);
+          strcat(fsname[n], "_");
+          strcat(fsname[n], KDIDname);
+        }
+      }
+      if (simu_opts->numOE != 0){
+        strcat(fsname[n], "_OE");
+        for (i = 0; i < simu_opts->numOE; i++){
+          sprintf(OEIDname, "%d", simu_opts->OEID[i]);
+          strcat(fsname[n], "_");
+          strcat(fsname[n], OEIDname);
+        }
+      }
+      if (simu_opts->numDE != 0){
+        strcat(fsname[n], "_DE");
+        for (i = 0; i < simu_opts->numDE; i++){
+          sprintf(DEIDname, "%d", simu_opts->DEID[i]);
+          strcat(fsname[n], "_");
+          strcat(fsname[n], DEIDname);
+        }
+      }
+    }
+    strcat (fsname[n], "_solution");
+    //strcat (fsname[n], "_");
+    //strcat (fsname[cnt-1], tmpparasname);
+    strcat (fsname[n], ".dat");
+    f_s[n] = fopen(fsname[n],"w");
+  }
+
+  
+
+  fprintf(f_s[cnt-1], "%d\t%d", num, cnt);
+  fprintf(f_s[n], "%d\t%d", num, cnt);
     for (h = 0; h < cnt; h++){
         h2 = 1;
         while (h2 <= topoinfo->numG) {
             fprintf(f_s[cnt-1], "\t%f", log2(tmprlt->soln[topoinfo->numG*h + h2 - 1]));
+			fprintf(f_s[n], "\t%f", log2(tmprlt->soln[topoinfo->numG*h + h2 - 1]));		
             h2++;
         }
-    }//printf("14\n");
+		
+        if(h!=cnt-1){
+			fprintf(f_s[n],"\n");
+			fprintf(f_s[n], "%d\t%d", num, cnt);
+		}		
+    }
   fprintf(f_s[cnt-1], "\n");
-	//printf("14.5\n");
-  if (simu_opts->num_paras == glob2) {
-    for (i = 0; i < simu_opts->num_stability; i++){
+  fprintf(f_s[n],"\n");
+
+  if (simu_opts->num_paras ==  num) {
+    for (i = 0; i < simu_opts->num_stability +1 ; i++){
       if (f_s[i] != NULL){
         fclose(f_s[i]);
       }
-    }//printf("15\n");
+    }
     free(f_s);
-   // printf("16\n");
   }
 }
 
 void export_SBML_model (struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt, int modelID)
 {
-  FILE *f_sbml = NULL;                  
+  FILE *f_sbml = NULL;
   char fpname [100] = "";
 
   int h = 0;
@@ -1922,7 +1995,7 @@ void export_SBML_model (struct opts *simu_opts, struct topo *topoinfo, struct rl
       fprintf(f_sbml, "\t\t\t\t<listOfProducts>\n");
       fprintf(f_sbml, "\t\t\t\t\t<speciesReference species=\"x%d\" />\n", i);
       fprintf(f_sbml, "\t\t\t\t</listOfProducts>\n");
-                  
+
 
       fprintf(f_sbml, "\t\t\t\t<kineticLaw>\n");
       fprintf(f_sbml, "\t\t\t\t\t<math xmlns=\"http://www.w3.org/1998/Math/MathML\">\n");
@@ -1933,11 +2006,11 @@ void export_SBML_model (struct opts *simu_opts, struct topo *topoinfo, struct rl
 
       // production
       fprintf(f_sbml, "\t\t\t\t\t\t\t\t<ci>g%d</ci>\n", i);
-                    
+
       // regulation
       for (j = 0; j < topoinfo->numR; j++){
         if (topoinfo->TargetG[j] == i){
-          if (topoinfo->TypeR[j] == 1){ //Activation       
+          if (topoinfo->TypeR[j] == 1){ //Activation
             // fprintf(f_model, "*(Hillshift(ytmp(%d), p(%d), p(%d), p(%d)/p(%d)))", topoinfo->SourceG[j]+1, 2*topoinfo->numG+3*(count-1)+1, 2*topoinfo->numG+3*(count-1)+1+1, 2*topoinfo->numG+3*(count-1)+2+1, 2*topoinfo->numG+3*(count-1)+2+1);
             fprintf(f_sbml, "\t\t\t\t\t\t\t\t<apply>\n");
             fprintf(f_sbml, "\t\t\t\t\t\t\t\t\t<divide/>\n");
@@ -1962,7 +2035,7 @@ void export_SBML_model (struct opts *simu_opts, struct topo *topoinfo, struct rl
             fprintf(f_sbml, "\t\t\t\t\t\t\t\t</apply>\n");
           }
         }
-        
+
       }
 
       fprintf(f_sbml, "\t\t\t\t\t\t\t</apply>\n");
@@ -1995,7 +2068,7 @@ void export_SBML_model (struct opts *simu_opts, struct topo *topoinfo, struct rl
 }
 
 void set_parameters (struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt)
-{ 
+{
 
   int i = 0;
 
@@ -2054,7 +2127,7 @@ void set_parameters (struct opts *simu_opts, struct topo *topoinfo, struct rlt *
 
       // lambda
       for (i = 0; i < topoinfo->numR; i++){
-          
+
           if (topoinfo->prsrandrange[2][3*i + 2 + 2*topoinfo->numG] == 1) {      // Activation
             tmprlt->paras[3*i + 2 + 2*topoinfo->numG] =     randfd(topoinfo->prsrandrange[0][3*i + 2 + 2*topoinfo->numG], topoinfo->prsrandrange[1][3*i + 2 + 2*topoinfo->numG], simu_opts->dist);
           }
@@ -2086,7 +2159,7 @@ void set_parameters (struct opts *simu_opts, struct topo *topoinfo, struct rlt *
 
       // lambda
       for (i = 0; i < topoinfo->numR; i++){
-          
+
           if (topoinfo->prsrandrange[2][3*i + 2 + 2*topoinfo->numG] == 1) {      // Activation
             tmprlt->paras[3*i + 2 + 2*topoinfo->numG] =     randfd(topoinfo->prsrandrange[0][3*i + 2 + 2*topoinfo->numG], 0, simu_opts->dist);
           }
@@ -2096,7 +2169,7 @@ void set_parameters (struct opts *simu_opts, struct topo *topoinfo, struct rlt *
       }
       break;
   }
-  
+
   if (simu_opts->numKD != 0) {
     for (i = 0; i < simu_opts->numKD; i++){
       if (simu_opts->KDID[i] <= topoinfo->numG) {
@@ -2174,14 +2247,14 @@ void RIVs(double *y, double *ytmp, double *p, struct topo *topoinfo)
 
       for (j = 0; j < topoinfo->numR; j++){
         if (topoinfo->TargetG[j] == i){
-          if (topoinfo->TypeR[j] == 1){ //Activation  
-            minV = minV*(1.0/p[topoinfo->ParasPos[j] + 2]); 
+          if (topoinfo->TypeR[j] == 1){ //Activation
+            minV = minV*(1.0/p[topoinfo->ParasPos[j] + 2]);
             // printf("%f\t", p[topoinfo->ParasPos[j] + 2]);
           }
           else if (topoinfo->TypeR[j] == 2) { //Inhibition
             minV = minV*(p[topoinfo->ParasPos[j] + 2]);
             // printf("%f\t", p[topoinfo->ParasPos[j] + 2]);
-          }       
+          }
         }
       }
       // printf("\n");
@@ -2224,42 +2297,44 @@ void solve_ODE_euler (int j, struct opts *simu_opts, struct topo *topoinfo, stru
   for (i = 0; i < topoinfo->numG; i++){
     ytmp[i] = 2000.0;
   }
- 
+
   int cnt_loop = 0;
-  
+
   RIVs(y, ytmp, tmprlt->paras, topoinfo);
-    
+
   testdelta = sumdelta(y, ytmp, topoinfo->numG);
-  
-  while (testdelta != 0 && cnt_loop < 20) { // maximum iteration is 20 times
+
+  while (testdelta >1e-7 && cnt_loop < simu_opts->maxiters) {
     t_start = t_stop;
     t_stop  = t_stop + 100;
-    
+
     cnt_loop = cnt_loop + 1;
-  
+
     for ( i_step = 1; i_step <= n_step; i_step++ )
-    { 
+    {
       for (i = 0; i < topoinfo->numG; i++){
           ytmp[i] = y[i];
       }
-        
+
       model_ODE ( t, ytmp, yp, tmprlt->paras, topoinfo );
-      
+
       for (i = 0; i < topoinfo->numG; i++){
               y[i] = ytmp[i] + yp[i]*simu_opts->stepsize;
           }
-          
+             testdelta = sumdelta(y, ytmp, topoinfo->numG);
+			 if(testdelta<1e-7){
+				 break;
+			 }
           t = t + simu_opts->stepsize;
       }
-      
+
       testdelta = sumdelta(y, ytmp, topoinfo->numG);
     }
-  //#pragma omp critical
-  //{
+
   for (i = 0; i < topoinfo->numG; i++){
     tmprlt->y_store[topoinfo->numG*j + i] = y[i];
   }
-  //}
+
   free(y);
   free(yp);
   free(ytmp);
@@ -2293,56 +2368,60 @@ void solve_ODE_rk45 (int j, struct opts *simu_opts, struct topo *topoinfo, struc
   for (i = 0; i < topoinfo->numG; i++){
     ytmp[i] = 2000.0;
   }
- 
+
   int cnt_loop = 0;
-  
+
   RIVs(y, ytmp, tmprlt->paras, topoinfo);
-    
+
   testdelta = sumdelta(y, ytmp, topoinfo->numG);
-  
-  while (testdelta != 0 && cnt_loop < 20) { // maximum iteration is 20 times
+
+  while (testdelta >1e-7 && cnt_loop < simu_opts->maxiters) {
     t_start = t_stop;
     t_stop  = t_stop + 100;
-    
+
     cnt_loop = cnt_loop + 1;
 
     model_ODE ( t, ytmp, yp, tmprlt->paras, topoinfo);
     flag = 1;
-  
+
     // printf("RACIPELIB 2008");
 
     for ( i_step = 1; i_step <= n_step; i_step++ )
-    { 
+    {
         for (i = 0; i < topoinfo->numG; i++){
             ytmp[i] = y[i];
         }
-    
-        t = ( ( double ) ( n_step - i_step + 1 ) * t_start  
+
+        t = ( ( double ) ( n_step - i_step + 1 ) * t_start
             + ( double ) (          i_step - 1 ) * t_stop )
             / ( double ) ( n_step              );
 
-        t_out = ( ( double ) ( n_step - i_step ) * t_start  
+        t_out = ( ( double ) ( n_step - i_step ) * t_start
                 + ( double ) (          i_step ) * t_stop )
                 / ( double ) ( n_step          );
 
         flag = r4_rkf45 (model_ODE, topoinfo->numG, y, yp, tmprlt->paras, topoinfo, &t, t_out, &relerr, abserr, flag );
-        // printf ( "%4d  %12f\n", flag, t); 
+
+		// testdelta = sumdelta(y, ytmp, topoinfo->numG);
+		// if(testdelta<=1e-7){
+		// 	break;
+		// }
+        // printf ( "%4d  %12f\n", flag, t);
 
         // if (i_step == n_step - 1) {
-        //     printf ( "%4d  %12f  %12f  %12f\n", flag, t, y[0], y[1]); 
+        //     printf ( "%4d  %12f  %12f  %12f\n", flag, t, y[0], y[1]);
         // }
     }
-
+     testdelta = sumdelta(y, ytmp, topoinfo->numG);
     // printf ( "%4d  %12f  %12f  %12f\n", flag, t, y[0], y[1]);
-      
-    testdelta = sumdelta(y, ytmp, topoinfo->numG);
+
+
   }
-  //#pragma omp critical
-  //{
+
   for (i = 0; i < topoinfo->numG; i++){
     tmprlt->y_store[topoinfo->numG*j + i] = y[i];
   }
-  //}
+
   free(y);
   free(yp);
   free(ytmp);
@@ -2359,14 +2438,14 @@ void count_state (struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmp
     int cnt       = 1;
     double delta  = 0.0;
     double sumpow = 0.0;
-    
+
     for (h = 1; h <= topoinfo->numG; h++){
-        tmprlt->soln[h - 1] = tmprlt->y_store[h - 1]; 
+        tmprlt->soln[h - 1] = tmprlt->y_store[h - 1];
     }
-    
+
     for (i = 2; i <= simu_opts->num_ode; i++){
         count = 0;
-        
+
         for (j = 1; j <= cnt; j++){
             h = 1;
             sumpow = 0.0;
@@ -2374,20 +2453,20 @@ void count_state (struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmp
                 sumpow = sumpow + pow((tmprlt->y_store[topoinfo->numG*(i-1) + h - 1] - tmprlt->soln[topoinfo->numG*(j-1) + h - 1]), 2);
                 h++;
             }
-        
+
             delta = sqrt(sumpow);
-            
+
             if (delta > simu_opts->thrd){
                 count = count + 1;
-            } 
-        }    
-        
+            }
+        }
+
         if (count == cnt){
             cnt = cnt + 1;
-            
+
             if (cnt <= simu_opts->num_stability) {
                 for (h = 1; h <= topoinfo->numG; h++){
-                    tmprlt->soln[(cnt-1)*topoinfo->numG + h - 1] = tmprlt->y_store[topoinfo->numG*(i-1) + h - 1]; 
+                    tmprlt->soln[(cnt-1)*topoinfo->numG + h - 1] = tmprlt->y_store[topoinfo->numG*(i-1) + h - 1];
                 }
             }
             else{
@@ -2396,7 +2475,7 @@ void count_state (struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmp
             }
         }
     }
-    
+
     tmprlt->cnt_store[cnt-1] = tmprlt->cnt_store[cnt-1] + 1;
     tmprlt->Nstb = cnt;
 }
@@ -2472,7 +2551,7 @@ void T_test(struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt, i
       }
     }
 
-    fprintf(f_test, "%d", glob2);
+    fprintf(f_test, "%d", num);
     for (j = 0; j < topoinfo->numG; j++){
       fprintf(f_test, "\t%d\t%d", localnumover[j], localnumdown[j]);
       tmprlt->numover[j] = tmprlt->numover[j] + localnumover[j];
@@ -2482,12 +2561,12 @@ void T_test(struct opts *simu_opts, struct topo *topoinfo, struct rlt *tmprlt, i
 
     free(localnumover);
     free(localnumdown);
-  
-    if (simu_opts->num_paras == glob2){
+
+    if (simu_opts->num_paras == num){
       fclose(f_test);
       f_test = NULL;
     }
-  
+
   }
 }
 
@@ -2512,7 +2591,7 @@ void release_memory(struct opts *simu_opts, struct topo *topoinfo, struct rlt *t
   free(topoinfo->prsrandrange[1]);
   free(topoinfo->prsrandrange[2]);
   free(topoinfo->prsrandrange);
-  
+
   free(tmprlt->numover);
   free(tmprlt->numdown);
   free(tmprlt->cnt_store);
